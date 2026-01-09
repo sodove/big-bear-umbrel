@@ -1,92 +1,100 @@
-# Configuration for nextcloud setup
-# Name of the big-bear-nextcloud application
 version: "3.7"
-# Service definitions for the big-bear-nextcloud application
+
 services:
+  # --- Umbrel App Proxy ---
   app_proxy:
     environment:
-      APP_HOST: big-bear-umbrel-nextcloud_nextcloud_1
+      APP_HOST: nextcloud
       APP_PORT: "80"
-  # Service name: app
-  # The `app` service definition
+      PROXY_AUTH_ADD: "false"
+
+  # --- Nextcloud (Official + SMB Hack) ---
   nextcloud:
-    # Use the nextcloud image from the official Docker Hub
-    image: bigbeartechworld/big-bear-nextcloud-with-smbclient:32.0.3
-    # Restart the container unless stopped
+    image: nextcloud:stable
     restart: unless-stopped
-    # Mount the nextcloud_html directory on the host to /var/www/html in the container
     volumes:
       - ${APP_DATA_DIR}/html:/var/www/html
-    # Set environment variables for the container
+    entrypoint: 
+      - /bin/bash
+      - -c
+      - |
+        apt-get update && \
+        apt-get install -y smbclient libsmbclient && \
+        exec /entrypoint.sh apache2-foreground
     environment:
       - POSTGRES_HOST=db-nextcloud
       - REDIS_HOST=redis-nextcloud
-      - POSTGRES_PASSWORD=casaos
-      - POSTGRES_USER=casaos
+      - POSTGRES_PASSWORD=umbrel
+      - POSTGRES_USER=umbrel
       - POSTGRES_DB=nextcloud
-      - NEXTCLOUD_ADMIN_USER=casaos
-      - NEXTCLOUD_ADMIN_PASSWORD=casaos
-      - TRUSTED_PROXIES=
-      - OVERWRITEPROTOCOL=http
+      - NEXTCLOUD_ADMIN_USER=umbrel
+      - NEXTCLOUD_ADMIN_PASSWORD=moneyprintergobrrr
+      - TRUSTED_PROXIES=172.16.0.0/12 192.168.0.0/16 10.0.0.0/8
+      - OVERWRITEPROTOCOL=https
+      - NEXTCLOUD_TRUSTED_DOMAINS=*
       - PHP_MEMORY_LIMIT=1024M
-      - PHP_UPLOAD_LIMIT=1024M
-    # Specify the dependencies
+      - PHP_UPLOAD_LIMIT=10G
     depends_on:
       db-nextcloud:
         condition: service_healthy
       redis-nextcloud:
         condition: service_healthy
-    # Define the network
     networks:
-      - nextcloud_network
-  # Define the database container for Nextcloud
+      - default
+
+  # --- Database ---
   db-nextcloud:
-    image: postgres:14.2
+    image: postgres:16-alpine
     restart: unless-stopped
     volumes:
-      - ${APP_DATA_DIR}/pgdata:/var/lib/postgresql/data # Mount the PostgreSQL data directory
+      - ${APP_DATA_DIR}/pgdata:/var/lib/postgresql/data
     environment:
-      - POSTGRES_PASSWORD=casaos # Set the PostgreSQL password
-      - POSTGRES_USER=casaos # Set the PostgreSQL username
-      - POSTGRES_DB=nextcloud # Set the name of the Nextcloud database
+      - POSTGRES_PASSWORD=umbrel
+      - POSTGRES_USER=umbrel
+      - POSTGRES_DB=nextcloud
     networks:
-      - nextcloud_network # Connect to the Nextcloud network
-    # Healthcheck configuration for the database service
+      - default
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U casaos -d nextcloud"]
+      test: ["CMD-SHELL", "pg_isready -U umbrel -d nextcloud"]
       interval: 10s
       timeout: 5s
       retries: 5
-  # Redis configuration for Nextcloud
+
+  # --- Redis ---
   redis-nextcloud:
-    user: "1000:1000"
-    image: redis:6.2.20@sha256:d06ff6ec778c7f2a5c0dfaf58141d598efaa50a89d0e966faedfdf122cef451b
+    image: redis:alpine
     restart: unless-stopped
     volumes:
-      - ${APP_DATA_DIR}/redis:/data # Mount the Redis data directory
+      - ${APP_DATA_DIR}/redis:/data
     networks:
-      - nextcloud_network # Connect to the Nextcloud network
-    # Healthcheck configuration for the Redis service
+      - default
     healthcheck:
       test: ["CMD-SHELL", "redis-cli ping || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # --- Cron ---
+  # Крону тоже нужен SMB, чтобы сканировать внешние диски в фоне
   cron:
-    image: bigbeartechworld/big-bear-nextcloud-with-smbclient:32.0.3
+    image: nextcloud:stable
     restart: unless-stopped
     volumes:
       - ${APP_DATA_DIR}/html:/var/www/html
-    entrypoint: /cron.sh
-    # Specify the dependencies
+    # Тот же хак для Cron контейнера
+    entrypoint: 
+      - /bin/bash
+      - -c
+      - |
+        apt-get update && \
+        apt-get install -y smbclient libsmbclient && \
+        exec /cron.sh
     depends_on:
-      db-nextcloud:
-        condition: service_healthy
-      redis-nextcloud:
-        condition: service_healthy
+      nextcloud:
+        condition: service_started
     networks:
-      - nextcloud_network # Connect to the Nextcloud network
-# Network definition for the big-bear-nextcloud application
+      - default
+
 networks:
-  nextcloud_network:
+  default:
     driver: bridge
