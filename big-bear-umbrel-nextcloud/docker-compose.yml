@@ -10,16 +10,31 @@ services:
 
   # --- Nextcloud (Official + SMB Hack) ---
   nextcloud:
-    image: nextcloud:stable
+    image: nextcloud:29
     restart: unless-stopped
     volumes:
       - ${APP_DATA_DIR}/html:/var/www/html
-    entrypoint: 
+    entrypoint:
       - /bin/bash
       - -c
       - |
-        apt-get update && \
-        apt-get install -y smbclient libsmbclient && \
+        echo "Updating apt..."
+        apt-get update
+        echo "Installing SMB client..."
+        apt-get install -y smbclient libsmbclient
+        
+        echo "Fixing SMB config for Nextcloud..."
+        mkdir -p /etc/samba
+        cat > /etc/samba/smb.conf <<EOL
+        [global]
+           client min protocol = NT1
+           client max protocol = SMB3
+           # Эти настройки помогают избежать таймаутов и ошибок авторизации
+           client lanman auth = yes
+           client ntlmv2 auth = yes
+        EOL
+
+        echo "Starting Nextcloud..."
         exec /entrypoint.sh apache2-foreground
     environment:
       - POSTGRES_HOST=db-nextcloud
@@ -75,17 +90,22 @@ services:
   # --- Cron ---
   # Крону тоже нужен SMB, чтобы сканировать внешние диски в фоне
   cron:
-    image: nextcloud:stable
+    image: nextcloud:29
     restart: unless-stopped
     volumes:
       - ${APP_DATA_DIR}/html:/var/www/html
     # Тот же хак для Cron контейнера
-    entrypoint: 
+    entrypoint:
       - /bin/bash
       - -c
       - |
-        apt-get update && \
-        apt-get install -y smbclient libsmbclient && \
+        apt-get update && apt-get install -y smbclient libsmbclient
+        mkdir -p /etc/samba
+        cat > /etc/samba/smb.conf <<EOL
+        [global]
+           client min protocol = NT1
+           client max protocol = SMB3
+        EOL
         exec /cron.sh
     depends_on:
       nextcloud:
